@@ -423,6 +423,210 @@ export function belt(api, d) {
   api.hud && api.hud.appendChild(chip(`T₁/T₂ = e^μβ`));
 }
 
+/* ==========================================================================
+   Truss — members, joints and reactions, counted
+   ========================================================================== */
+export function truss(api, d) {
+  const g = new THREE.Group();
+  const m = Math.max(1, Math.round(d.m ?? 9));
+  const j = Math.max(4, Math.round(d.j ?? 6));
+  const r = Math.max(1, Math.round(d.r ?? 3));
+
+  // 2(n+1) joints, 4n+1 members → pick n from the joint count
+  const n = Math.max(1, Math.round(j / 2) - 1);
+  const span = 4.2;
+  const hgt = 1.15;
+  const dx = span / n;
+
+  const B = [], T = [];
+  for (let i = 0; i <= n; i++) {
+    const x = -span / 2 + i * dx;
+    B.push([x, 0]);
+    T.push([x, hgt]);
+  }
+
+  const members = [];
+  for (let i = 0; i < n; i++) {
+    members.push([B[i], B[i + 1]]);   // bottom chord
+    members.push([T[i], T[i + 1]]);   // top chord
+    members.push([B[i], T[i + 1]]);   // diagonal
+  }
+  for (let i = 0; i <= n; i++) members.push([B[i], T[i]]);  // verticals
+
+  const D = 0.14;
+  members.forEach(([A, C]) => {
+    const len = Math.hypot(C[0] - A[0], C[1] - A[1]);
+    const bar = box(len, 0.085, D, {
+      color: PALETTE.steel,
+      position: [(A[0] + C[0]) / 2, (A[1] + C[1]) / 2, 0],
+    });
+    bar.rotation.z = Math.atan2(C[1] - A[1], C[0] - A[0]);
+    part(g, bar, { opacity: 0.35 });
+  });
+
+  let idx = 1;
+  const pinAt = (p, label) => {
+    const pin = cylinder(0.055, 0.055, D * 1.4, { color: PALETTE.steelDark, segments: 14, position: [p[0], p[1], 0] });
+    pin.rotation.x = Math.PI / 2;
+    g.add(pin);
+    if (label) api.label(String(idx++), new THREE.Vector3(p[0], p[1] - 0.22, D / 2), { style: "background:#fff" });
+  };
+  B.forEach((p) => pinAt(p, true));
+  T.forEach((p) => pinAt(p, true));
+
+  // supports under the end joints
+  [-span / 2, span / 2].forEach((x) => {
+    g.add(arrow([x, -0.62, 0], [x, -0.07, 0], {
+      color: PALETTE.accent, headLen: 0.13, headR: 0.05, shaftR: 0.015,
+    }));
+  });
+  api.label("R", new THREE.Vector3(-span / 2 - 0.4, -0.5, 0), { style: "background:#eef6ec" });
+  api.label("R", new THREE.Vector3(span / 2 + 0.4, -0.5, 0), { style: "background:#eef6ec" });
+
+  // applied load at midspan, so the truss reads as a structure
+  g.add(arrow([0, hgt + 0.7, 0], [0, hgt + 0.06, 0], {
+    color: PALETTE.bad, headLen: 0.15, headR: 0.055, shaftR: 0.018,
+  }));
+  api.label("P", new THREE.Vector3(0.28, hgt + 0.62, 0), { style: "background:#fdecec" });
+
+  api.label(`${m} members · ${j} joints · ${r} reactions`, new THREE.Vector3(0, -1.0, 0), {
+    style: "background:#e9eff9",
+  });
+
+  api.legend([
+    { color: "#8b939c", label: "members" },
+    { color: "#5f666e", label: "joints" },
+    { color: "#2f7d32", label: "reactions" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`m + r − 2j = ${m + r - 2 * j}`));
+}
+
+/* ==========================================================================
+   Steel plate in tension — bolt holes and the net section
+   ========================================================================== */
+export function plate(api, d) {
+  const g = new THREE.Group();
+  const W = 4.0, Hh = 1.0, D = 0.16;
+  const holes = 3;
+
+  part(g, prism([[-W / 2, -Hh / 2], [W / 2, -Hh / 2], [W / 2, Hh / 2], [-W / 2, Hh / 2]], D,
+    { color: PALETTE.steel, opacity: 0.9 }), { opacity: 0.45 });
+
+  // bolt holes on the critical line
+  const xh = -0.5;
+  for (let i = 0; i < holes; i++) {
+    const y = -Hh / 2 + (Hh * (i + 0.5)) / holes;
+    const hole = cylinder(0.1, 0.1, D * 1.4, { color: 0x2b2b24, segments: 20, position: [xh, y, 0] });
+    hole.rotation.x = Math.PI / 2;
+    g.add(hole);
+  }
+
+  // net section plane
+  g.add(dashed([[xh, -Hh / 2 - 0.16, D / 2], [xh, Hh / 2 + 0.16, D / 2]], { color: PALETTE.bad, dashSize: 0.07 }));
+  api.label("net section", new THREE.Vector3(xh, Hh / 2 + 0.34, D / 2), { style: "background:#fdecec" });
+
+  // tension
+  g.add(arrow([-W / 2 - 0.7, 0, 0], [-W / 2 - 0.05, 0, 0], { color: PALETTE.accent, headLen: 0.14, headR: 0.05, shaftR: 0.016 }));
+  g.add(arrow([W / 2 + 0.7, 0, 0], [W / 2 + 0.05, 0, 0], { color: PALETTE.accent, headLen: 0.14, headR: 0.05, shaftR: 0.016 }));
+  api.label("T", new THREE.Vector3(-W / 2 - 0.55, 0.28, 0), { style: "background:#eef6ec" });
+  api.label("T", new THREE.Vector3(W / 2 + 0.55, 0.28, 0), { style: "background:#eef6ec" });
+
+  api.label(`A_g = ${T(d.Ag, 0)} mm²`, new THREE.Vector3(0.7, Hh / 2 + 0.3, 0), { style: "background:#e9eff9" });
+  api.label(`A_n = ${T(d.An, 0)} mm²`, new THREE.Vector3(0.7, -Hh / 2 - 0.3, 0), { style: "background:#fceaf1" });
+
+  api.legend([
+    { color: "#8b939c", label: "gross section A_g" },
+    { color: "#c0392b", label: "net section through the holes" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`φP_n = ${T(Math.min(0.9 * d.Fy * d.Ag, 0.75 * d.Fu * d.U * d.An) / 1000, 0)} kN`));
+}
+
+/* ==========================================================================
+   T-beam section — flange and web to scale
+   ========================================================================== */
+export function tbeam(api, d) {
+  const g = new THREE.Group();
+  const bw = d.bw ?? 300, hf = d.hf ?? 120;
+  const bf = Math.min((d.L ?? 7.5) * 1000 / 4, bw + 16 * hf, bw + ((d.s1 ?? 2400) + (d.s2 ?? 2400)) / 2);
+  const dEff = hf + 420;
+  const k = 2.8 / Math.max(bf, dEff);
+  const W = bf * k, wb = bw * k, hfl = hf * k, H = dEff * k;
+  const D = 1.0;
+
+  const pts = [
+    [-W / 2, 0], [W / 2, 0], [W / 2, -hfl], [wb / 2, -hfl],
+    [wb / 2, -H], [-wb / 2, -H], [-wb / 2, -hfl], [-W / 2, -hfl],
+  ];
+  part(g, prism(pts, D, { color: PALETTE.concrete, capColor: shade(PALETTE.concrete, 1.1) }), { opacity: 0.45 });
+
+  // reinforcement in the web
+  for (let i = 0; i < 3; i++) {
+    const bar = cylinder(0.05, 0.05, D + 0.02, { color: 0xb0552b, segments: 14 });
+    bar.rotation.x = Math.PI / 2;
+    bar.position.set(-wb / 2 + (wb * (i + 0.5)) / 3, -H + 0.12, 0);
+    g.add(bar);
+  }
+
+  // effective flange width bracket
+  g.add(dimLine([-W / 2, 0.28, 0], [W / 2, 0.28, 0], { tick: 0.08, color: PALETTE.accent2 }));
+  api.label(`b_f = ${T(bf, 0)} mm`, new THREE.Vector3(0, 0.52, 0), { style: "background:#fceaf1" });
+  api.label(`b_w = ${T(bw, 0)}`, new THREE.Vector3(wb / 2 + 0.55, -H * 0.6, 0), { style: "background:#fff" });
+  api.label(`h_f = ${T(hf, 0)}`, new THREE.Vector3(-W / 2 - 0.6, -hfl / 2, 0), { style: "background:#eef6ec" });
+
+  api.legend([
+    { color: "#b9b6ab", label: "concrete section" },
+    { color: "#b0552b", label: "tension steel" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`flange + web`));
+}
+
+/* ==========================================================================
+   Impact — a weight dropped onto a member
+   ========================================================================== */
+export function impact(api, d) {
+  const g = new THREE.Group();
+  const h = Math.min(d.h ?? 100, 400);
+  const barH = 2.4;
+  const drop = 0.4 + (h / 400) * 1.2;
+  // recompute the two deflections here so the model is self-contained
+  const dst = ((d.P ?? 10) * 1e3 * (d.L ?? 3)) / ((d.A ?? 1200) * (d.E ?? 200) * 1e3);
+  const di = dst * (1 + Math.sqrt(1 + (2 * (h / 1000)) / dst));
+  const factor = di / dst;
+
+  // member
+  const bar = box(0.16, barH, 0.16, { color: PALETTE.steel, position: [0, -barH / 2, 0] });
+  part(g, bar, { opacity: 0.45 });
+
+  // base
+  part(g, prism([[-0.6, -barH], [0.6, -barH], [0.6, -barH - 0.16], [-0.6, -barH - 0.16]], 0.9,
+    { color: PALETTE.concreteDark }), { opacity: 0.4 });
+
+  // falling weight
+  const w = box(0.34, 0.22, 0.34, { color: PALETTE.bad, position: [0, drop, 0] });
+  part(g, w, { opacity: 0.4 });
+
+  // drop height
+  g.add(dimLine([0.42, drop, 0], [0.42, 0, 0], { tick: 0.07, color: PALETTE.accent2 }));
+  api.label(`h = ${T(h, 0)} mm`, new THREE.Vector3(1.05, drop / 2, 0), { style: "background:#fceaf1" });
+
+  g.add(arrow([0, drop + 0.45, 0], [0, drop + 0.2, 0], { color: PALETTE.accent, headLen: 0.1, headR: 0.04, shaftR: 0.012 }));
+  api.label(`P = ${T(d.P, 1)} kN`, new THREE.Vector3(0.5, drop + 0.42, 0), { style: "background:#eef6ec" });
+
+  // deflected position
+  g.add(dashed([[0, 0, 0], [0, -0.35, 0]], { color: PALETTE.accent3, dashSize: 0.06 }));
+  api.label(`δ_i = ${T(di * 1000, 2)} mm`, new THREE.Vector3(-0.75, -0.2, 0), { style: "background:#e9eff9" });
+
+  api.legend([
+    { color: "#c0392b", label: "dropped weight" },
+    { color: "#8b939c", label: "member" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`impact factor ${T(factor, 2)}`));
+}
+
 /* ========================================================================== */
 function chip(text) {
   const el = document.createElement("span");

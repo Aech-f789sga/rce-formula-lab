@@ -382,16 +382,13 @@ function renderCalc(calc) {
   ]);
 
   const vizPanel = h("section", { class: "panel vizpanel" }, [
-    h("div", { class: "panel__head" }, [
+    h("div", { class: "panel__head panel__head--viz" }, [
       h("h2", { text: calc.viz ? "2.5D model" : "Model" }),
       h("span", { class: "spacer" }),
-      calc.viz
-        ? h("div", { class: "viz-tools" }, [
-            h("button", { type: "button", title: "Reset view", text: "⟲", onclick: () => vizApi && vizApi.reset() }),
-          ])
-        : null,
+      calc.viz ? h("div", { class: "viz-toolbar" }) : null,
     ]),
     h("div", { class: "viz", id: "vizHost" }),
+    h("div", { class: "viz-legend", hidden: true }),
   ]);
 
   const stepsPanel = h("section", { class: "panel" }, [
@@ -509,7 +506,9 @@ function renderCalc(calc) {
 
     paintAnswers(out.results || []);
     paintSteps(out.steps || []);
-    updateViz(out.viz);
+    // Models get the raw inputs plus whatever extra data run() supplied, so a
+    // builder can derive anything it needs without a bespoke payload.
+    updateViz({ ...vals, ...(out.viz || {}) });
   }, 90);
 
   function paintAnswers(results) {
@@ -659,10 +658,45 @@ const REFS = [
         lic: "MIT",
       },
       {
+        name: "three.js — RoomEnvironment",
+        url: "https://github.com/mrdoob/three.js/blob/dev/examples/jsm/environments/RoomEnvironment.js",
+        what: "A small studio of emissive boxes, pre-filtered with PMREMGenerator into an environment map. This is what gives the concrete, soil and steel their image-based reflections and keeps shadowed faces from going flat.",
+        lic: "MIT",
+      },
+      {
         name: "three.js — OrbitControls (reference for the drag maths)",
         url: "https://github.com/mrdoob/three.js/blob/dev/examples/jsm/controls/OrbitControls.js",
         what: "The spherical-coordinate orbit + dolly interaction was reimplemented in ~40 lines in js/viz/scene.js rather than imported, to keep the bundle small.",
         lic: "MIT",
+      },
+    ],
+  },
+  {
+    group: "Surface textures",
+    items: [
+      {
+        name: "ambientCG — Concrete034",
+        url: "https://ambientcg.com/view?id=Concrete034",
+        what: "Concrete surface for the dam, retaining wall, footings, channel lining and RC sections. Downscaled to 512 px and converted to a neutral detail map so the section palette can tint it.",
+        lic: "CC0 1.0",
+      },
+      {
+        name: "ambientCG — Ground054",
+        url: "https://ambientcg.com/view?id=Ground054",
+        what: "Soil and sand grain for the phase block, layered profiles and backfill.",
+        lic: "CC0 1.0",
+      },
+      {
+        name: "ambientCG — Metal032",
+        url: "https://ambientcg.com/view?id=Metal032",
+        what: "Brushed metal for pipes, piles, steel members and plates. The only surface that keeps its normal map — at model scale the others read as noise.",
+        lic: "CC0 1.0",
+      },
+      {
+        name: "Procedural water ripple normal",
+        url: "#",
+        what: "Generated in js/viz/scene.js as a sum of sines written into a canvas, with the gradient encoded as a tangent-space normal map. No external asset.",
+        lic: "This project",
       },
     ],
   },

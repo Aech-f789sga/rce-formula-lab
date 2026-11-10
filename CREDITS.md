@@ -32,11 +32,45 @@ about forty lines in `js/viz/scene.js` rather than imported, to keep the bundle
 small and to clamp the elevation the way an engineering drawing wants
 (−7° to +77°). No OrbitControls code is vendored.
 
+### three.js — RoomEnvironment
+<https://github.com/mrdoob/three.js/blob/dev/examples/jsm/environments/RoomEnvironment.js> · **MIT**
+
+A small studio built from emissive boxes, pre-filtered with `PMREMGenerator` into
+an environment map. This is what gives the concrete, soil and steel their
+image-based reflections and stops shadowed faces going flat. Vendored at
+`vendor/three/addons/environments/RoomEnvironment.js`.
+
 ### EdgesGeometry
 <https://threejs.org/docs/#api/en/geometries/EdgesGeometry> · **MIT**
 
 Used by `outline()` in `js/viz/scene.js` to draw the silhouette of each part, so
 the models read like technical illustrations rather than flat plastic.
+
+---
+
+## Surface textures
+
+### ambientCG
+<https://ambientcg.com> · **CC0 1.0 (public domain)**
+
+Three 1K texture sets, downscaled to 512 px and reduced to the maps this project
+actually uses. The colour maps were converted to neutral, low-contrast **detail**
+maps so they can be tinted by the section palette instead of fighting it.
+
+| Asset | Used for | Maps kept |
+|---|---|---|
+| [Concrete034](https://ambientcg.com/view?id=Concrete034) | dam, retaining wall, footings, channel lining, RC sections | detail, normal, roughness |
+| [Ground054](https://ambientcg.com/view?id=Ground054) | soil blocks, sand layers, backfill | detail, normal, roughness |
+| [Metal032](https://ambientcg.com/view?id=Metal032) | pipes, piles, steel members, plates | detail, normal, roughness |
+
+Files live in `vendor/textures/`. Only the metal set keeps its normal map — at
+model scale the concrete and soil normals read as noise and can flip the shading
+normal, so those surfaces rely on the detail and roughness maps only.
+
+### Water ripple normal
+Generated procedurally in `js/viz/scene.js` (`makeWaterNormal`) as a sum of
+sines evaluated on a canvas, with the gradient encoded as a tangent-space normal
+map. No external asset, so nothing to license.
 
 ---
 

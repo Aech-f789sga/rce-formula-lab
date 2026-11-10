@@ -53,6 +53,47 @@ const ALL = [
   ...MATH.map((c) => ({ ...c, section: "math" })),
 ];
 
+/* Models are attached by id here so a calculator's own definition stays
+   focused on the maths. */
+const VIZ_BY_ID = {
+  // ---- Math, Surveying & Transportation ----
+  "mat-right-triangle": "mat:triangle",
+  "mat-oblique": "mat:triangle",
+  "mat-polygon": "mat:polygon",
+  "mat-circle-triangle": "mat:incircle",
+  "mat-quadratic": "mat:parabola",
+  "mat-binomial": "mat:pascal",
+  "mat-poisson": "mat:pmf",
+  "mat-interest": "mat:growth",
+  "mat-annuity": "mat:cashflow",
+  "mat-payback": "mat:cashflow",
+  "mat-area-rules": "mat:offsets",
+  "mat-optimum": "mat:box3d",
+  "mat-physics": "mat:wave",
+  // ---- Geotechnical ----
+  "geo-grainsize": "geo:gradation",
+  "geo-compaction": "geo:proctor",
+  "geo-atterberg": "geo:consistency",
+  "geo-flowindex": "geo:flowcurve",
+  "geo-perm-eq": "geo:strata",
+  "geo-seepage": "geo:flownet",
+  "geo-consol": "geo:elogp",
+  "geo-pile": "geo:pile",
+  // ---- Hydraulics ----
+  "hyd-darcy": "hyd:friction",
+  "hyd-hammer": "hyd:hammer",
+  "hyd-capillary": "hyd:capillary",
+  // ---- Structural ----
+  "str-determinacy": "str:truss",
+  "str-steel-tension": "str:plate",
+  "str-tbeam": "str:tbeam",
+  "str-impact": "str:impact",
+};
+
+ALL.forEach((c) => {
+  if (!c.viz && VIZ_BY_ID[c.id]) c.viz = VIZ_BY_ID[c.id];
+});
+
 export const CALCULATORS = ALL;
 
 export const BY_ID = Object.fromEntries(ALL.map((c) => [c.id, c]));

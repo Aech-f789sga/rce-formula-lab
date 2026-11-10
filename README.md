@@ -8,7 +8,7 @@ Pick a topic, type the values you already have, and read the answer together wit
 the full substitution trail. Every topic that has geometry attached to it also
 gets a rotatable **2.5D model** that redraws itself from your numbers.
 
-**77 calculators · 31 models · 4 sections · 137 source pages**
+**77 calculators · 59 models · 4 sections · 137 source pages**
 
 ---
 
@@ -18,7 +18,8 @@ gets a rotatable **2.5D model** that redraws itself from your numbers.
 |---|---|
 | **Auto-calculates** | Every field is pre-filled with a realistic value, so each calculator answers something sensible the moment it opens. Change a number and everything recomputes. |
 | **Shows the work** | Each answer comes with a numbered solution: the formula on the card, the numbers substituted into it, the intermediate results, and the notes the card adds in the margin. |
-| **Draws the situation** | Soil phase blocks, gravity dams, trapezoidal channels, beams with moment diagrams, RC sections, horizontal and vertical curves — all built from your inputs, in an isometric "laser-cut" style. Drag to orbit, scroll to zoom. |
+| **Draws the situation** | Soil phase blocks, gravity dams, trapezoidal channels, beams with moment diagrams, RC sections, gradation and consolidation curves, horizontal and vertical curves — 59 of the 77 topics have one, all built from your inputs. Drag to orbit, scroll to zoom. |
+| **A real viewport** | Every model has a view presets (Iso / Front / Side / Top), a wireframe toggle, label toggle, auto-rotate, PNG export and a fullscreen expand. A legend explains what each colour means. |
 | **Sorted per section** | Geotechnical, Hydraulics, Structural, and Math / Surveying / Transportation — grouped by sub-topic exactly as the card is. |
 | **Searchable** | Press `/` and type. Searches titles, sub-topics and keywords ("void ratio", "weir", "column"). |
 | **Offline-capable** | three.js and KaTeX are vendored into `vendor/`. No CDN, no network, no build step. |
@@ -32,32 +33,39 @@ Phase relationships · consistency & classification · permeability & seepage ·
 stresses in soil · consolidation & settlement · bearing capacity · lateral earth
 pressure · slope stability · deep foundations.
 
-*Models:* soil phase block, layered stress profile, Terzaghi failure wedge,
-retaining wall with pressure diagram, infinite slope with trial failure plane.
+*Models:* soil phase block, gradation curve, compaction curve, Atterberg
+consistency states, flow curve, layered strata, flow net, layered stress profile,
+e–log p curve, Terzaghi failure wedge, retaining wall with pressure diagram,
+infinite slope with trial failure plane, pile with shaft and tip resistance.
 
 ### Hydraulics — source pages 16–31
 Fluid properties · hydrostatics · dams · buoyancy & stability · pipes & tanks ·
 orifices & weirs · open channels · energy & flow · head losses · momentum ·
 relative equilibrium.
 
-*Models:* gravity dam, inclined gate, floating body with metacentre, pressure
-pipe, orifice tank, rectangular and V-notch weirs, trapezoidal channel,
-hydraulic jump, EGL/HGL diagram, jet on a vane, rotating vessel.
+*Models:* gravity dam (with self-weight, uplift and resultant), inclined gate,
+floating body with metacentre, pressure pipe, orifice tank, rectangular and
+V-notch weirs, trapezoidal channel, hydraulic jump, EGL/HGL diagrams, pipe
+friction, water hammer, capillary rise, jet on a vane, rotating vessel.
 
 ### Structural Analysis & Design — source pages 34–85
 Strength of materials · beams & reactions · structural analysis · columns ·
 steel design · reinforced concrete · foundations.
 
 *Models:* simply supported beam with moment diagram, cantilever with deflected
-shape, column buckling modes, RC section with stress block, isolated footing with
-punching perimeter, pile cap plan, belt friction on a pulley.
+shape, column buckling modes, truss with numbered joints, steel plate with bolt
+holes, RC section with stress block, T-beam, isolated footing with punching
+perimeter, pile cap plan, impact drop test, belt friction on a pulley.
 
 ### Math, Surveying & Transportation — source pages 88–137
 Trigonometry & geometry · analytic geometry · algebra & statistics · engineering
 economy · surveying · calculus · physics.
 
-*Models:* line between two points, symmetrical vertical curve, horizontal curve
-plan, earthwork prismoid, normal distribution.
+*Models:* right and oblique triangles, regular polygon with apothem, inscribed
+and circumscribed circles, parabola, Pascal's triangle, Poisson PMF, compound
+interest growth, cash-flow diagram, offsets with trapezoidal strips, the open-box
+optimum, wave, line between two points, vertical curve, horizontal curve plan,
+earthwork prismoid, normal distribution.
 
 ---
 
@@ -107,6 +115,22 @@ vendor/
   three/                 three.js r160 (MIT) — the only 3D dependency
   katex/                 KaTeX 0.16 (MIT) + fonts
 ```
+
+### The model panel
+
+Each model is a Three.js scene with physically-based materials, an environment
+map for image-based lighting, and ACES tone mapping. Surfaces use CC0 detail
+maps from ambientCG (concrete, soil, brushed metal) plus a procedurally
+generated water ripple normal. The camera is orthographic and framed by
+projecting the model's bounding box into camera space, so wide, short diagrams
+and tall sections both fill the panel.
+
+`js/viz/scene.js` holds the stage and the geometry helpers (`prism`, `box`,
+`cylinder`, `arrow`, `dimLine`, `face`, `polyline`, `dashed`, `outline`, …).
+A model is a plain exported function `(api, data, hud)` that adds meshes to
+`api.root`, calls `api.label()` for annotations and `api.legend()` for the
+colour key. `api` also exposes `setView`, `setWireframe`, `setLabels`,
+`setSpin`, `snapshot` and `fit`.
 
 ### Adding a calculator
 
@@ -175,7 +199,10 @@ app at **Code references & credits**.
 
 * Formula source: **FORMULA CARD (Engr. APJO) — without grid**, Engr. Aleah Pearl
   Javier Once, RCE, 2024.
-* 3D: [three.js](https://github.com/mrdoob/three.js) (MIT).
+* 3D: [three.js](https://github.com/mrdoob/three.js) (MIT), including its
+  `RoomEnvironment` for image-based lighting.
+* Surfaces: [ambientCG](https://ambientcg.com) detail maps — Concrete034,
+  Ground054, Metal032 (CC0).
 * Math typesetting: [KaTeX](https://github.com/KaTeX/KaTeX) (MIT).
 * Type: Inter, Space Grotesk, JetBrains Mono (SIL OFL 1.1).
 

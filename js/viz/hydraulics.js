@@ -16,74 +16,96 @@ const WATER = 0x7fa9c9;
    ========================================================================== */
 export function dam(api, d) {
   const g = new THREE.Group();
+  // x runs from the heel (upstream, x = 0) to the toe (downstream, x = B)
   const { H, B, tw, FH, Ry, xbar, hw } = d;
-  const D = 2.2;
+  const D = 2.0;
+  const W1 = d.W1 ?? 0, W2 = d.W2 ?? 0, U = d.U ?? 0;
 
-  // dam body (trapezoid: vertical upstream face on the left)
-  const body = prism(
-    [[0, 0], [B, 0], [tw, H], [0, H]],
-    D,
-    { color: PALETTE.concrete, capColor: shade(PALETTE.concrete, 1.08) }
-  );
-  part(g, body, { opacity: 0.65 });
+  // ---- upstream reservoir ----
+  const res = prism([[-H * 0.5, 0], [0, 0], [0, H], [-H * 0.5, H]], D,
+    { color: WATER, capColor: shade(WATER, 1.12), opacity: 0.5 });
+  part(g, res, { opacity: 0.28 });
+  g.add(polyline([[-H * 0.5, H, D / 2], [0, H, D / 2]], { color: PALETTE.waterDark }));
+  api.label("reservoir", new THREE.Vector3(-H * 0.32, H * 0.72, D / 2), { style: "background:#eaf0f8" });
 
-  // upstream water
-  const water = prism(
-    [[-H * 0.55, 0], [0, 0], [0, H], [-H * 0.55, H]],
-    D,
-    { color: WATER, capColor: shade(WATER, 1.12), opacity: 0.45 }
-  );
-  part(g, water, { opacity: 0.3 });
+  // ---- dam body: vertical upstream face, sloping downstream face ----
+  const body = prism([[0, 0], [B, 0], [tw, H], [0, H]], D,
+    { color: PALETTE.concrete, capColor: shade(PALETTE.concrete, 1.06) });
+  part(g, body, { opacity: 0.5 });
 
-  // tailwater
+  // ---- tailwater ----
   if (hw > 0.05) {
-    const tw2 = prism(
-      [[B, 0], [B + hw * 0.7, 0], [B + hw * 0.7, hw], [B, hw]],
-      D,
-      { color: WATER, opacity: 0.4 }
-    );
-    part(g, tw2, { opacity: 0.25 });
+    const twm = prism([[B, 0], [B + hw * 0.6, 0], [B + hw * 0.6, hw], [B, hw]], D,
+      { color: WATER, opacity: 0.45 });
+    part(g, twm, { opacity: 0.25 });
   }
 
-  // uplift pressure triangle under the base
-  const upPts = [[0, 0], [B, 0], [0, -Math.max(H * 0.16, 0.3)]];
-  g.add(face(upPts, { color: PALETTE.warn, opacity: 0.3, position: [0, 0, D / 2 + 0.01] }));
-  g.add(polyline(upPts.map(([x, y]) => [x, y, D / 2 + 0.02]), { color: PALETTE.warn }));
+  const zf = D / 2 + 0.02;
 
-  // horizontal water force
+  // ---- horizontal water thrust at H/3 ----
   const yH = H / 3;
-  g.add(arrow([-H * 0.62, yH, D / 2 + 0.02], [-0.06, yH, D / 2 + 0.02], {
-    color: PALETTE.accent3, headLen: 0.28, headR: 0.1, shaftR: 0.032,
+  g.add(arrow([-H * 0.46, yH, zf], [-0.05, yH, zf], {
+    color: PALETTE.accent3, headLen: 0.3, headR: 0.11, shaftR: 0.035,
   }));
-  api.label(`F_H = ${T(FH, 0)} kN`, new THREE.Vector3(-H * 0.30, H * 0.92, D / 2 + 0.02), { style: "background:#e9eff9" });
+  api.label(`F_H = ${T(FH, 0)} kN at H/3`, new THREE.Vector3(-H * 0.34, yH + 0.95, zf), { style: "background:#e9eff9" });
 
-  // resultant (lever arm measured from the toe, so convert back to the heel)
-  const xr = Math.min(Math.max(B - xbar, 0.1), B);
-  g.add(arrow([xr, H * 0.62, D / 2 + 0.05], [xr, -0.12, D / 2 + 0.05], {
-    color: PALETTE.bad, headLen: 0.24, headR: 0.09, shaftR: 0.03,
-  }));
-  api.label(`R_y = ${T(Ry, 0)} kN`, new THREE.Vector3(xr + 1.6, H * 0.8, D / 2 + 0.05), { style: "background:#fdecec" });
-
-  // foundation pressure arrows — peak at the toe (x = B), minimum at the heel
-  const qmax = Math.max(d.qmax || 0, 0);
-  const qmin = Math.max(d.qmin || 0, 0);
-  const qs = 0.9 / Math.max(qmax, 1);
-  for (let i = 0; i <= 6; i++) {
-    const x = (i / 6) * B;
-    const q = qmin + ((qmax - qmin) * i) / 6;
-    if (q * qs < 0.02) continue;
-    g.add(arrow([x, -0.02, D / 2 + 0.03], [x, -0.02 - q * qs, D / 2 + 0.03], {
-      color: PALETTE.accent, headLen: 0.07, headR: 0.028, shaftR: 0.009,
+  // ---- vertical self-weight, at each part's centroid ----
+  const x1 = tw / 2;
+  const x2 = tw + (B - tw) / 3;
+  if (W1 > 0) {
+    g.add(arrow([x1, H * 1.02, zf], [x1, H * 0.16, zf], {
+      color: PALETTE.bad, headLen: 0.22, headR: 0.08, shaftR: 0.026,
     }));
   }
+  if (W2 > 0) {
+    g.add(arrow([x2, H * 0.72, zf], [x2, H * 0.1, zf], {
+      color: PALETTE.bad, headLen: 0.22, headR: 0.08, shaftR: 0.026,
+    }));
+  }
+  api.label(`W₁`, new THREE.Vector3(x1, H * 1.12, zf), { style: "background:#fdecec" });
+  api.label(`W₂`, new THREE.Vector3(x2, H * 0.82, zf), { style: "background:#fdecec" });
 
-  api.label(`B = ${T(B)} m`, new THREE.Vector3(B * 0.5, -1.0, D / 2), { style: "background:#fff" });
-  api.label(`H = ${T(H)} m`, new THREE.Vector3(-H * 0.78, H * 0.5, D / 2), { style: "background:#fff" });
-  g.add(dimLine([-H * 0.62, 0, 0], [-H * 0.62, H, 0], { tick: 0.1 }));
-  g.add(dimLine([0, -0.55, 0], [B, -0.55, 0], { tick: 0.1 }));
+  // ---- uplift: acts upward on the base, peak at the heel ----
+  if (U > 0) {
+    const upPts = [[0, 0], [B, 0], [0, -Math.max(H * 0.18, 0.35)]];
+    g.add(face(upPts, { color: PALETTE.warn, opacity: 0.3, position: [0, 0, zf] }));
+    g.add(polyline(upPts.map(([x, y]) => [x, y, zf]), { color: PALETTE.warn }));
+    for (let i = 0; i <= 4; i++) {
+      const x = (i / 4) * B * 0.9;
+      const len = (1 - x / B) * Math.max(H * 0.18, 0.35) * 0.9;
+      if (len < 0.05) continue;
+      g.add(arrow([x, -len - 0.02, zf], [x, -0.02, zf], {
+        color: PALETTE.warn, headLen: 0.1, headR: 0.035, shaftR: 0.01,
+      }));
+    }
+    api.label("U", new THREE.Vector3(B * 0.16, -Math.max(H * 0.18, 0.35) - 0.3, zf), { style: "background:#fdf4dd" });
+  }
 
+  // ---- resultant, at x̄ measured from the toe ----
+  const xr = Math.min(Math.max(B - xbar, 0.1), B);
+  g.add(arrow([xr, H * 0.78, zf + 0.03], [xr, -0.1, zf + 0.03], {
+    color: 0x6d2b22, headLen: 0.26, headR: 0.09, shaftR: 0.032,
+  }));
+  api.label(`R_y = ${T(Ry, 0)} kN`, new THREE.Vector3(xr + 0.9, H * 0.6, zf + 0.03), { style: "background:#fdecec" });
+
+  // ---- base dimensions ----
+  g.add(dimLine([0, -0.95, 0], [B, -0.95, 0], { tick: 0.1 }));
+  api.label(`B = ${T(B)} m`, new THREE.Vector3(B * 0.72, -1.15, D / 2), { style: "background:#fff" });
+  g.add(dimLine([-H * 0.58, 0, 0], [-H * 0.58, H, 0], { tick: 0.1 }));
+  api.label(`H = ${T(H)} m`, new THREE.Vector3(-H * 0.58 - 0.95, H * 0.12, D / 2), { style: "background:#fff" });
+
+  api.legend([
+    { color: "#7fa9c9", label: "water" },
+    { color: "#b9b6ab", label: "concrete" },
+    { color: "#c0392b", label: "self weight W" },
+    { color: "#d08b00", label: "uplift U (upward)" },
+    { color: "#6d2b22", label: "resultant R_y" },
+  ]);
   api.add(g);
-  api.hud && api.hud.appendChild(chip(`FS_o ${T(d.FSo, 2)} · FS_s ${T(d.FSs, 2)}`));
+  api.hud && api.hud.appendChild(chip(`W₁ ${T(W1, 0)}`));
+  api.hud && api.hud.appendChild(chip(`W₂ ${T(W2, 0)}`));
+  api.hud && api.hud.appendChild(chip(`U ${T(U, 0)}`));
+  api.hud && api.hud.appendChild(chip(`FS_o ${T(d.FSo, 2)} · FS_s ${T(d.FSs, 2)} · e ${T(d.e, 2)} m`));
 }
 
 /* ==========================================================================
@@ -587,6 +609,132 @@ export function rotating(api, d) {
 
   api.add(g);
   api.hud && api.hud.appendChild(chip(yEdge > H ? "would spill" : "contained"));
+}
+
+/* ==========================================================================
+   Pipe friction — head lost along the run
+   ========================================================================== */
+export function friction(api, d) {
+  const g = new THREE.Group();
+  const L = 4.0;
+  const hf = Math.min(d.hf ?? 1, 4);
+  const k = 1.4 / Math.max(hf, 0.4);
+
+  const pipe = cylinder(0.09, 0.09, L, { color: PALETTE.steel, segments: 28 });
+  pipe.rotation.z = Math.PI / 2;
+  part(g, pipe, { opacity: 0.4 });
+
+  // energy and hydraulic grade lines falling by hf
+  const e0 = 1.5;
+  g.add(polyline([[-L / 2, e0, 0], [L / 2, e0 - hf * k, 0]], { color: PALETTE.accent2 }));
+  g.add(polyline([[-L / 2, e0 - 0.16, 0], [L / 2, e0 - 0.16 - hf * k, 0]], { color: PALETTE.accent3 }));
+  api.label("EGL", new THREE.Vector3(-L / 2 - 0.3, e0, 0), { style: "background:#fceaf1" });
+  api.label("HGL", new THREE.Vector3(-L / 2 - 0.3, e0 - 0.16, 0), { style: "background:#e9eff9" });
+
+  // friction arrows along the wall
+  for (let i = 0; i <= 6; i++) {
+    const x = -L / 2 + (L * i) / 6;
+    g.add(arrow([x, -0.14, 0], [x + 0.24, -0.14, 0], {
+      color: PALETTE.warn, headLen: 0.08, headR: 0.028, shaftR: 0.008,
+    }));
+  }
+  api.label(`h_f = ${T(d.hf, 3)} m`, new THREE.Vector3(0, e0 + 0.32, 0), { style: "background:#fdf4dd" });
+  api.label(`N_R = ${T(d.Re, 0)}`, new THREE.Vector3(L / 2 - 0.5, 0.35, 0), { style: "background:#fff" });
+  api.label(`f = ${T(d.f, 4)}`, new THREE.Vector3(-L / 2 + 0.7, 0.35, 0), { style: "background:#fff" });
+
+  api.legend([
+    { color: "#c2185b", label: "energy grade line" },
+    { color: "#0d47a1", label: "hydraulic grade line" },
+    { color: "#d08b00", label: "wall friction" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`${d.Re < 2000 ? "laminar" : "turbulent"} flow`));
+}
+
+/* ==========================================================================
+   Water hammer — pressure wave travelling in a pipe
+   ========================================================================== */
+export function hammer(api, d) {
+  const g = new THREE.Group();
+  const L = 4.2;
+  const surge = Math.min((d.Ph || 1) / 100, 6);
+  const k = 1.3 / Math.max(surge, 0.6);
+
+  const pipe = cylinder(0.1, 0.1, L, { color: PALETTE.steel, segments: 28 });
+  pipe.rotation.z = Math.PI / 2;
+  part(g, pipe, { opacity: 0.4 });
+
+  // steady pressure line and the surge envelope
+  g.add(polyline([[-L / 2, 0.9, 0], [L / 2, 0.9, 0]], { color: PALETTE.accent3, opacity: 0.6 }));
+  g.add(polyline([[-L / 2, 0.9, 0], [L / 2 - 0.35, 0.9, 0], [L / 2 - 0.35, 0.9 + surge * k, 0]], {
+    color: PALETTE.bad,
+  }));
+  api.label(`P_h = ${T((d.Ph || 0) / 1000, 1)} kPa`, new THREE.Vector3(L / 2 - 0.2, 0.9 + surge * k + 0.22, 0), {
+    style: "background:#fdecec",
+  });
+
+  // valve
+  const valve = cylinder(0.17, 0.17, 0.1, { color: PALETTE.steelDark, segments: 6, position: [L / 2 - 0.35, 0, 0] });
+  valve.rotation.z = Math.PI / 2;
+  g.add(valve);
+  api.label("valve", new THREE.Vector3(L / 2 - 0.35, -0.35, 0), { style: "background:#fff" });
+
+  // wave travelling back up the pipe
+  for (let i = 0; i < 4; i++) {
+    const x = L / 2 - 0.7 - i * 0.75;
+    g.add(arrow([x, 0.45, 0], [x - 0.42, 0.45, 0], {
+      color: PALETTE.accent2, headLen: 0.1, headR: 0.035, shaftR: 0.011,
+    }));
+  }
+  api.label(`c = ${T(d.c, 0)} m/s`, new THREE.Vector3(-L / 2 + 0.85, 0.45, 0), { style: "background:#fceaf1" });
+
+  api.legend([
+    { color: "#0d47a1", label: "steady pressure" },
+    { color: "#c0392b", label: "surge pressure" },
+    { color: "#c2185b", label: "wave direction" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`2L/c = ${T(d.T, 3)} s`));
+}
+
+/* ==========================================================================
+   Capillary rise in a tube
+   ========================================================================== */
+export function capillary(api, d) {
+  const g = new THREE.Group();
+  const h = Math.max(d.h ?? 0.01, 0.001);
+  const rise = Math.min(h * 40, 3.2);
+
+  // reservoir
+  part(g, prism([[-1.5, 0], [1.5, 0], [1.5, -0.5], [-1.5, -0.5]], 1.6,
+    { color: WATER, opacity: 0.45 }), { opacity: 0.25 });
+  g.add(polyline([[-1.5, 0, 0.81], [1.5, 0, 0.81]], { color: PALETTE.waterDark }));
+
+  // tube
+  const tube = cylinder(0.16, 0.16, rise + 1.1, {
+    color: 0xdfe7ec, segments: 32, open: true, opacity: 0.5,
+  });
+  tube.position.set(0, (rise + 1.1) / 2 - 0.1, 0);
+  part(g, tube, { opacity: 0.3 });
+
+  // water column inside the tube, rising to h
+  const col = cylinder(0.145, 0.145, rise, { color: WATER, segments: 28, position: [0, rise / 2, 0] });
+  part(g, col, { opacity: 0.4 });
+
+  // meniscus
+  const men = cylinder(0.145, 0.145, 0.03, { color: 0xa9c6da, segments: 28, position: [0, rise, 0] });
+  g.add(men);
+
+  g.add(dimLine([0.34, 0, 0], [0.34, rise, 0], { tick: 0.07, color: PALETTE.accent2 }));
+  api.label(`h = ${T(h * 1000, 2)} mm`, new THREE.Vector3(0.85, rise / 2, 0), { style: "background:#fceaf1" });
+  api.label("σ, θ", new THREE.Vector3(-0.6, rise + 0.22, 0), { style: "background:#fff" });
+
+  api.legend([
+    { color: "#7fa9c9", label: "water" },
+    { color: "#c2185b", label: "capillary rise h" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`h = 4σcosθ / γd`));
 }
 
 /* ========================================================================== */

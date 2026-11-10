@@ -1,11 +1,16 @@
 /* ==========================================================================
    scene.js — the 2.5D stage
-   A deliberately flat-lit, isometric-ish Three.js scene so engineering
-   sections read like a laser-cut model rather than a video game.
+   Physically-based materials, image-based lighting and a restrained studio
+   look, so engineering sections read as models rather than plastic toys.
    ========================================================================== */
 
 import * as THREE from "three";
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { h } from "../core.js";
+
+/* ==========================================================================
+   Palette
+   ========================================================================== */
 
 export const PALETTE = {
   ink: 0x2b2b24,
@@ -13,14 +18,15 @@ export const PALETTE = {
   paper: 0xf3f1ea,
   concrete: 0xb9b6ab,
   concreteDark: 0x8e8b80,
-  steel: 0x7c8794,
-  steelDark: 0x5a636e,
+  steel: 0x8b939c,
+  steelDark: 0x5f666e,
   soil: 0xb08d63,
   soilDark: 0x8a6c49,
   sand: 0xd6bd8e,
   water: 0x7fa9c9,
   waterDark: 0x5b88ab,
   air: 0xe9e7df,
+  wood: 0xb98a55,
   accent: 0x2f7d32,
   accent2: 0xc2185b,
   accent3: 0x0d47a1,
@@ -29,28 +35,7 @@ export const PALETTE = {
   white: 0xffffff,
 };
 
-const CAP = (color, opts = {}) =>
-  new THREE.MeshStandardMaterial({
-    color,
-    roughness: opts.roughness ?? 0.82,
-    metalness: opts.metalness ?? 0.02,
-    flatShading: false,
-    transparent: opts.opacity !== undefined && opts.opacity < 1,
-    opacity: opts.opacity ?? 1,
-    side: THREE.DoubleSide,
-  });
-
-const SIDE = (color, opts = {}) =>
-  new THREE.MeshStandardMaterial({
-    color,
-    roughness: (opts.roughness ?? 0.82) * 0.96,
-    metalness: opts.metalness ?? 0.02,
-    transparent: opts.opacity !== undefined && opts.opacity < 1,
-    opacity: opts.opacity ?? 1,
-    side: THREE.DoubleSide,
-  });
-
-function shade(hex, k) {
+export function shade(hex, k) {
   const c = new THREE.Color(hex);
   const hsl = {};
   c.getHSL(hsl);
@@ -59,8 +44,207 @@ function shade(hex, k) {
 }
 
 /* ==========================================================================
+   Shared GPU resources — created once, reused by every model
+   ========================================================================== */
+
+const TEX_BASE = "vendor/textures/";
+const shared = { envMap: null, tex: {}, ready: false };
+
+function loadTex(loader, file, srgb) {
+  const t = loader.load(TEX_BASE + file);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 4;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/** Procedural ripple normal map for water — no external asset needed. */
+function makeWaterNormal(size = 256) {
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(size, size);
+
+  const TAU = Math.PI * 2;
+  const height = (x, y) => {
+    const u = (x / size) * TAU;
+    const v = (y / size) * TAU;
+    return (
+      Math.sin(u * 3 + Math.sin(v * 2) * 0.7) * 0.5 +
+      Math.sin(v * 4 + Math.cos(u * 3) * 0.6) * 0.35 +
+      Math.sin((u + v) * 2.0) * 0.15
+    );
+  };
+
+  const strength = 1.3;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = height(x + 1, y) - height(x - 1, y);
+      const dy = height(x, y + 1) - height(x, y - 1);
+      const nx = -dx * strength, ny = -dy * strength, nz = 1;
+      const len = Math.hypot(nx, ny, nz);
+      const i = (y * size + x) * 4;
+      img.data[i] = ((nx / len) * 0.5 + 0.5) * 255;
+      img.data[i + 1] = ((ny / len) * 0.5 + 0.5) * 255;
+      img.data[i + 2] = ((nz / len) * 0.5 + 0.5) * 255;
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+function initShared(renderer) {
+  if (shared.ready) return;
+  shared.ready = true;
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const room = new RoomEnvironment();
+  shared.envMap = pmrem.fromScene(room, 0.04).texture;
+  room.dispose?.();
+  pmrem.dispose();
+
+  const loader = new THREE.TextureLoader();
+  for (const kind of ["concrete", "soil", "metal"]) {
+    shared.tex[kind] = {
+      map: loadTex(loader, `${kind}-detail.jpg`, true),
+      normalMap: loadTex(loader, `${kind}-normal.jpg`, false),
+      roughnessMap: loadTex(loader, `${kind}-rough.jpg`, false),
+    };
+  }
+  shared.tex.water = { normalMap: makeWaterNormal() };
+}
+
+/* ==========================================================================
+   Material factory
+   ========================================================================== */
+
+const KIND_BY_COLOR = new Map([
+  [PALETTE.concrete, "concrete"],
+  [PALETTE.concreteDark, "concrete"],
+  [PALETTE.soil, "soil"],
+  [PALETTE.soilDark, "soil"],
+  [PALETTE.sand, "soil"],
+  [PALETTE.steel, "metal"],
+  [PALETTE.steelDark, "metal"],
+  [PALETTE.water, "water"],
+  [PALETTE.waterDark, "water"],
+]);
+
+function resolveKind(color, kind) {
+  if (kind) return kind;
+  return KIND_BY_COLOR.get(color) || "flat";
+}
+
+/* Model scales here run from ~1 unit (a soil sample) to ~30 units (a dam), so
+   a fixed repeat would either wash out the small ones or turn the large ones
+   into noise. Instead each mesh is re-tiled so the grain reads the same size
+   on screen: TILES_ACROSS tiles over the longest dimension. */
+const TILES_ACROSS = { concrete: 3.2, soil: 3.6, metal: 4.5, water: 2.4 };
+
+const isMetalKind = (kind) => kind === "metal";
+
+function tilesFor(kind, uvScale) {
+  return (TILES_ACROSS[kind] ?? 3) * (uvScale ?? 1);
+}
+
+/** Set the repeat on every map of a material. */
+function retile(mat, r) {
+  for (const key of ["map", "normalMap", "roughnessMap"]) {
+    if (mat[key]) mat[key].repeat.set(r, r);
+  }
+  return mat;
+}
+
+/**
+ * Build a material. `kind` selects the surface family (and its texture set);
+ * `color` tints it. Everything is physically based, so the environment map
+ * does most of the work for realism.
+ */
+export function material(color, opts = {}) {
+  const kind = resolveKind(color, opts.kind);
+  const tex = shared.tex[kind];
+  const opacity = opts.opacity ?? 1;
+  const transparent = opacity < 1;
+  const normalised = opts.uvNormalised !== false;   // Box / Cylinder default
+
+  if (kind === "water") {
+    const n = tex?.normalMap?.clone();
+    if (n) {
+      n.needsUpdate = true;
+      const r = tilesFor("water", opts.uvScale);
+      n.repeat.set(r, r);
+    }
+    return new THREE.MeshPhysicalMaterial({
+      color,
+      metalness: 0.0,
+      roughness: 0.1,
+      transparent: true,
+      opacity: Math.min(opacity, 0.66),
+      normalMap: n,
+      normalScale: new THREE.Vector2(0.45, 0.45),
+      clearcoat: 1,
+      clearcoatRoughness: 0.06,
+      envMapIntensity: 2.0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+  }
+
+  if (kind === "flat") {
+    return new THREE.MeshStandardMaterial({
+      color,
+      roughness: opts.roughness ?? 0.78,
+      metalness: opts.metalness ?? 0.04,
+      transparent,
+      opacity,
+      side: THREE.DoubleSide,
+      envMapIntensity: 0.8,
+    });
+  }
+
+  // textured families — clone the maps so each material keeps its own repeat
+  const map = tex?.map?.clone();
+  // Normal maps on these surfaces read as noise at model scale and can flip
+  // the shading normal, so only brushed metal gets one.
+  const normalMap = isMetalKind(kind) ? tex?.normalMap?.clone() : null;
+  const roughnessMap = tex?.roughnessMap?.clone();
+  const r = tilesFor(kind, opts.uvScale);
+  [map, normalMap, roughnessMap].forEach((t) => {
+    if (!t) return;
+    t.needsUpdate = true;
+    t.repeat.set(r, r);
+  });
+
+  return new THREE.MeshStandardMaterial({
+    color,
+    map,
+    normalMap,
+    roughnessMap,
+    normalScale: new THREE.Vector2(0.4, 0.4),
+    roughness: opts.roughness ?? (isMetalKind(kind) ? 0.42 : kind === "concrete" ? 0.92 : 1.0),
+    metalness: opts.metalness ?? (isMetalKind(kind) ? 0.7 : 0.0),
+    transparent,
+    opacity,
+    side: THREE.DoubleSide,
+    envMapIntensity: opts.envMapIntensity ?? (isMetalKind(kind) ? 1.05 : 0.6),
+  });
+}
+
+/* ==========================================================================
    Scene controller
    ========================================================================== */
+
+export const VIEW_PRESETS = {
+  iso: { azimuth: -0.62, elevation: 0.52 },
+  hero: { azimuth: -0.95, elevation: 0.36 },
+  front: { azimuth: 0, elevation: 0.05 },
+  side: { azimuth: -Math.PI / 2, elevation: 0.05 },
+  top: { azimuth: 0, elevation: 1.45 },
+};
 
 export function createViz(container, opts = {}) {
   const scene = new THREE.Scene();
@@ -74,54 +258,67 @@ export function createViz(container, opts = {}) {
   });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.02;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   container.appendChild(renderer.domElement);
 
-  // ---- lighting: soft studio, no drama ----
-  const hemi = new THREE.HemisphereLight(0xffffff, 0xb9b5a6, 1.05);
+  initShared(renderer);
+  scene.environment = shared.envMap;
+  scene.environmentIntensity = 0.62;
+
+  /* ---- lighting: soft studio key + IBL ---- */
+  const hemi = new THREE.HemisphereLight(0xffffff, 0xb8b3a4, 0.42);
   scene.add(hemi);
 
-  const key = new THREE.DirectionalLight(0xffffff, 2.0);
+  const key = new THREE.DirectionalLight(0xfff4e2, 2.0);
   key.position.set(6, 11, 7);
   key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.near = 0.5;
-  key.shadow.camera.far = 60;
-  key.shadow.bias = -0.0012;
-  key.shadow.radius = 3;
+  key.shadow.camera.far = 80;
+  key.shadow.bias = -0.0006;
+  key.shadow.normalBias = 0.02;
+  key.shadow.radius = 4;
   scene.add(key);
 
-  const fill = new THREE.DirectionalLight(0xffffff, 0.55);
-  fill.position.set(-7, 5, -6);
+  const fill = new THREE.DirectionalLight(0xe8f0ff, 0.55);
+  fill.position.set(-8, 5, -6);
   scene.add(fill);
 
-  const rim = new THREE.DirectionalLight(0xffffff, 0.35);
-  rim.position.set(0, -6, 4);
+  const rim = new THREE.DirectionalLight(0xffffff, 0.25);
+  rim.position.set(0, -7, 5);
   scene.add(rim);
 
-  // ---- shadow catcher ----
-  const shadowGeo = new THREE.PlaneGeometry(200, 200);
-  const shadowMat = new THREE.ShadowMaterial({ opacity: 0.13 });
-  const shadowPlane = new THREE.Mesh(shadowGeo, shadowMat);
+  /* ---- shadow catcher ---- */
+  const shadowPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(400, 400),
+    new THREE.ShadowMaterial({ opacity: 0.2, color: 0x2b2b24 })
+  );
   shadowPlane.rotation.x = -Math.PI / 2;
   shadowPlane.receiveShadow = true;
   shadowPlane.position.y = -0.001;
   scene.add(shadowPlane);
 
-  // ---- camera ----
+  /* ---- camera ---- */
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, -1000, 2000);
   const view = {
-    azimuth: opts.azimuth ?? -0.62,
-    elevation: opts.elevation ?? 0.52,
+    azimuth: opts.azimuth ?? VIEW_PRESETS.iso.azimuth,
+    elevation: opts.elevation ?? VIEW_PRESETS.iso.elevation,
     zoom: 1,
     target: new THREE.Vector3(0, 0, 0),
     radius: 26,
+    home: {
+      azimuth: opts.azimuth ?? VIEW_PRESETS.iso.azimuth,
+      elevation: opts.elevation ?? VIEW_PRESETS.iso.elevation,
+    },
   };
 
   const labelsLayer = h("div", { class: "viz__labels" });
   container.appendChild(labelsLayer);
   let labels = [];
+  let labelsOn = true;
 
   /* ---------- camera placement ---------- */
   function placeCamera() {
@@ -138,7 +335,9 @@ export function createViz(container, opts = {}) {
   }
 
   /* ---------- framing ---------- */
-  function fit(padding = 1.2) {
+  let lastBox = null;
+
+  function fit(padding = 1.34) {
     const box = new THREE.Box3();
     let any = false;
     root.traverse((o) => {
@@ -148,6 +347,7 @@ export function createViz(container, opts = {}) {
       }
     });
     if (!any || !isFinite(box.min.x) || !isFinite(box.max.y)) return;
+    lastBox = box.clone();
 
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
@@ -158,68 +358,63 @@ export function createViz(container, opts = {}) {
 
     const rect = container.getBoundingClientRect();
     const aspect = Math.max(rect.width, 1) / Math.max(rect.height, 1);
-    const half = (maxDim * padding) / 2;
-    let w, hgt;
-    if (aspect >= 1) { hgt = half * 2; w = hgt * aspect; }
-    else { w = half * 2; hgt = w / aspect; }
 
-    camera.left = -w / 2;
-    camera.right = w / 2;
-    camera.top = hgt / 2;
-    camera.bottom = -hgt / 2;
+    // Provisional frustum, then measure the real projected extent of the
+    // bounding box in camera space. Using the world box for both axes makes
+    // wide, short diagrams tiny, so this is measured, not assumed.
+    camera.left = -1; camera.right = 1; camera.top = 1; camera.bottom = -1;
     camera.near = -500;
     camera.far = 1000;
-
-    key.shadow.camera.left = -maxDim * 2.2;
-    key.shadow.camera.right = maxDim * 2.2;
-    key.shadow.camera.top = maxDim * 2.2;
-    key.shadow.camera.bottom = -maxDim * 2.2;
-    key.shadow.camera.updateProjectionMatrix();
-    key.position.copy(center).add(new THREE.Vector3(maxDim * 1.6, maxDim * 2.6, maxDim * 1.8));
-    key.target.position.copy(center);
-    scene.add(key.target);
-
-    shadowPlane.position.y = box.min.y - 0.02;
-    placeCamera();
-
-    // The world bounding box is not the same as what lands on screen once the
-    // camera is tilted, so project the eight corners and grow the frustum
-    // until everything (plus a little margin) is inside.
-    camera.updateMatrixWorld();
     camera.updateProjectionMatrix();
+    placeCamera();
+    camera.updateMatrixWorld();
+    const inv = camera.matrixWorldInverse;
+
     const corners = [];
     for (const x of [box.min.x, box.max.x]) {
       for (const y of [box.min.y, box.max.y]) {
         for (const z of [box.min.z, box.max.z]) corners.push(new THREE.Vector3(x, y, z));
       }
     }
-    let k = 0;
+
     const v = new THREE.Vector3();
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const c of corners) {
-      v.copy(c).project(camera);
-      k = Math.max(k, Math.abs(v.x), Math.abs(v.y));
+      v.copy(c).applyMatrix4(inv);
+      minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
+      minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
     }
-    if (isFinite(k) && k > 0.9) {
-      const grow = k / 0.88;
-      const cx2 = (camera.left + camera.right) / 2;
-      const cy2 = (camera.top + camera.bottom) / 2;
-      const hw = ((camera.right - camera.left) / 2) * grow;
-      const hh = ((camera.top - camera.bottom) / 2) * grow;
-      camera.left = cx2 - hw;
-      camera.right = cx2 + hw;
-      camera.top = cy2 + hh;
-      camera.bottom = cy2 - hh;
-      camera.updateProjectionMatrix();
-    }
+    if (!isFinite(minX) || !isFinite(minY)) return;
+
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    let hw = Math.max((maxX - minX) / 2, 0.05) * padding;
+    let hh = Math.max((maxY - minY) / 2, 0.05) * padding;
+    if (hw / hh > aspect) hh = hw / aspect;
+    else hw = hh * aspect;
+
+    camera.left = cx - hw;
+    camera.right = cx + hw;
+    camera.top = cy + hh;
+    camera.bottom = cy - hh;
+    camera.updateProjectionMatrix();
+
+    key.shadow.camera.left = -maxDim * 2.4;
+    key.shadow.camera.right = maxDim * 2.4;
+    key.shadow.camera.top = maxDim * 2.4;
+    key.shadow.camera.bottom = -maxDim * 2.4;
+    key.shadow.camera.updateProjectionMatrix();
+    key.position.copy(center).add(new THREE.Vector3(maxDim * 1.5, maxDim * 2.6, maxDim * 1.7));
+    key.target.position.copy(center);
+    scene.add(key.target);
+
+    shadowPlane.position.y = box.min.y - 0.02;
   }
 
   /* ---------- labels ---------- */
   function label(text, pos, opts2 = {}) {
-    const el = h("div", {
-      class: "viz__label",
-      text,
-      style: opts2.style || "",
-    });
+    const el = h("div", { class: "viz__label", text, style: opts2.style || "" });
+    if (opts2.className) el.className += " " + opts2.className;
     labelsLayer.appendChild(el);
     labels.push({
       el,
@@ -238,7 +433,7 @@ export function createViz(container, opts = {}) {
       v.project(camera);
       const x = (v.x * 0.5 + 0.5) * rect.width;
       const y = (-v.y * 0.5 + 0.5) * rect.height;
-      const vis = v.z < 1;
+      const vis = labelsOn && v.z < 1;
       L.el.style.opacity = vis ? "1" : "0";
       L.el.style.left = `${x}px`;
       L.el.style.top = `${y}px`;
@@ -248,9 +443,17 @@ export function createViz(container, opts = {}) {
   /* ---------- render loop ---------- */
   let running = true;
   let needsFrame = true;
+  let spinning = false;
+  let dragging = false;
+
   function tick() {
     if (!running) return;
     requestAnimationFrame(tick);
+    if (spinning && !dragging) {
+      view.azimuth += 0.0042;
+      placeCamera();
+      needsFrame = true;
+    }
     if (!needsFrame) return;
     needsFrame = false;
     renderer.render(scene, camera);
@@ -284,7 +487,7 @@ export function createViz(container, opts = {}) {
   ro.observe(container);
 
   /* ---------- interaction: orbit + zoom ---------- */
-  let dragging = false, lastX = 0, lastY = 0;
+  let lastX = 0, lastY = 0;
   const el = renderer.domElement;
   el.style.cursor = "grab";
 
@@ -298,7 +501,7 @@ export function createViz(container, opts = {}) {
     const dx = e.clientX - lastX, dy = e.clientY - lastY;
     lastX = e.clientX; lastY = e.clientY;
     view.azimuth -= dx * 0.008;
-    view.elevation = Math.max(-0.12, Math.min(1.35, view.elevation + dy * 0.006));
+    view.elevation = Math.max(-0.12, Math.min(1.45, view.elevation + dy * 0.006));
     placeCamera(); invalidate();
   });
   const endDrag = (e) => {
@@ -327,6 +530,17 @@ export function createViz(container, opts = {}) {
     invalidate();
   }, { passive: false });
 
+  /* ---------- wireframe ---------- */
+  let wire = false;
+  function applyWireframe() {
+    root.traverse((o) => {
+      if (!o.material) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      mats.forEach((m) => { if ("wireframe" in m) m.wireframe = wire; });
+    });
+    invalidate();
+  }
+
   /* ---------- public ---------- */
   const api = {
     scene, root, camera, renderer, view,
@@ -344,14 +558,36 @@ export function createViz(container, opts = {}) {
     label,
     fit,
     invalidate,
-    reset() {
-      view.azimuth = opts.azimuth ?? -0.62;
-      view.elevation = opts.elevation ?? 0.52;
+    material,
+
+    setView(name) {
+      const p = VIEW_PRESETS[name];
+      if (!p) return;
+      view.azimuth = p.azimuth;
+      view.elevation = p.elevation;
       view.zoom = 1;
+      placeCamera();
+      if (lastBox) fit();
+      invalidate();
+    },
+    setWireframe(on) { wire = !!on; applyWireframe(); },
+    isWireframe() { return wire; },
+    setLabels(on) { labelsOn = !!on; invalidate(); },
+    labelsOn() { return labelsOn; },
+    setSpin(on) { spinning = !!on; },
+    isSpinning() { return spinning; },
+    reset() {
+      view.azimuth = view.home.azimuth;
+      view.elevation = view.home.elevation;
+      view.zoom = 1;
+      spinning = false;
       fit();
       invalidate();
     },
-    snapshot() { renderer.render(scene, camera); },
+    snapshot() {
+      renderer.render(scene, camera);
+      return renderer.domElement.toDataURL("image/png");
+    },
     dispose() {
       running = false;
       ro.disconnect();
@@ -362,7 +598,6 @@ export function createViz(container, opts = {}) {
     },
   };
 
-  // kick off
   const rect = container.getBoundingClientRect();
   renderer.setSize(rect.width || 600, rect.height || 400, false);
   placeCamera();
@@ -382,7 +617,7 @@ function disposeDeep(obj) {
 }
 
 /* ==========================================================================
-   Geometry helpers — build "laser-cut" 2.5D parts
+   Geometry helpers
    ========================================================================== */
 
 /** Extrude a 2D outline (array of [x,y]) along +Z by `depth`. */
@@ -402,11 +637,25 @@ export function prism(pts, depth, opts = {}) {
   geo.translate(0, 0, -depth / 2);
 
   const base = opts.color ?? PALETTE.concrete;
-  const cap = CAP(opts.capColor ?? base, opts);
-  const side = SIDE(opts.sideColor ?? shade(base, 0.78), opts);
+  // Resolve the family from the *base* colour: capColor/sideColor are tinted
+  // variants and would otherwise fall through to an untextured material.
+  const kind = resolveKind(base, opts.kind);
+  const cap = material(opts.capColor ?? base, { ...opts, kind });
+  const side = material(opts.sideColor ?? shade(base, 0.8), { ...opts, kind });
+
+  // ExtrudeGeometry emits UVs in shape coordinates, so the repeat has to be
+  // divided by the model's own size to keep the grain consistent.
+  geo.computeBoundingBox();
+  const gs = geo.boundingBox.getSize(new THREE.Vector3());
+  const maxDim = Math.max(gs.x, gs.y, gs.z, 0.25);
+  const r = tilesFor(kind, opts.uvScale) / maxDim;
+  retile(cap, r);
+  retile(side, r);
 
   const mesh = new THREE.Mesh(geo, [cap, side]);
-  mesh.castShadow = opts.castShadow !== false;
+  // transparent parts must not cast solid shadows — an air or water layer
+  // above the soil would black it out completely
+  mesh.castShadow = opts.castShadow !== false && (opts.opacity ?? 1) > 0.9;
   mesh.receiveShadow = true;
   if (opts.rotation) mesh.rotation.set(...opts.rotation);
   if (opts.position) mesh.position.set(...opts.position);
@@ -425,16 +674,8 @@ export function slab(w, hgt, depth, opts = {}) {
 /** Box with independent dimensions, centred. */
 export function box(w, hgt, d, opts = {}) {
   const geo = new THREE.BoxGeometry(w, hgt, d);
-  const base = opts.color ?? PALETTE.concrete;
-  const mat = new THREE.MeshStandardMaterial({
-    color: base,
-    roughness: opts.roughness ?? 0.8,
-    metalness: opts.metalness ?? 0.03,
-    transparent: opts.opacity !== undefined,
-    opacity: opts.opacity ?? 1,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = opts.castShadow !== false;
+  const mesh = new THREE.Mesh(geo, material(opts.color ?? PALETTE.concrete, opts));
+  mesh.castShadow = opts.castShadow !== false && (opts.opacity ?? 1) > 0.9;
   mesh.receiveShadow = true;
   if (opts.position) mesh.position.set(...opts.position);
   if (opts.rotation) mesh.rotation.set(...opts.rotation);
@@ -444,16 +685,8 @@ export function box(w, hgt, d, opts = {}) {
 /** Cylinder / tube along +Y by default. */
 export function cylinder(rTop, rBot, hgt, opts = {}) {
   const geo = new THREE.CylinderGeometry(rTop, rBot, hgt, opts.segments ?? 40, 1, !!opts.open);
-  const mat = new THREE.MeshStandardMaterial({
-    color: opts.color ?? PALETTE.steel,
-    roughness: opts.roughness ?? 0.6,
-    metalness: opts.metalness ?? 0.25,
-    transparent: opts.opacity !== undefined,
-    opacity: opts.opacity ?? 1,
-    side: THREE.DoubleSide,
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = opts.castShadow !== false;
+  const mesh = new THREE.Mesh(geo, material(opts.color ?? PALETTE.steel, opts));
+  mesh.castShadow = opts.castShadow !== false && (opts.opacity ?? 1) > 0.9;
   mesh.receiveShadow = true;
   if (opts.position) mesh.position.set(...opts.position);
   if (opts.rotation) mesh.rotation.set(...opts.rotation);
@@ -489,11 +722,10 @@ export function polyline(pts, opts = {}) {
     transparent: opts.opacity !== undefined,
     opacity: opts.opacity ?? 1,
   });
-  const line = new THREE.Line(geo, mat);
-  return line;
+  return new THREE.Line(geo, mat);
 }
 
-/** Dashed line — useful for centre lines / extension lines. */
+/** Dashed line — centre lines and extension lines. */
 export function dashed(pts, opts = {}) {
   const geo = new THREE.BufferGeometry().setFromPoints(
     pts.map((p) => new THREE.Vector3(p[0], p[1], p[2] ?? 0))
@@ -510,7 +742,7 @@ export function dashed(pts, opts = {}) {
   return line;
 }
 
-/** Solid arrow (shaft + cone head) pointing along +Y by default. */
+/** Solid arrow (shaft + cone head) pointing from `from` to `to`. */
 export function arrow(from, to, opts = {}) {
   const a = new THREE.Vector3(...from);
   const b = new THREE.Vector3(...to);
@@ -525,20 +757,14 @@ export function arrow(from, to, opts = {}) {
 
   const g = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({
-    color, roughness: 0.6, metalness: 0.05,
+    color, roughness: 0.55, metalness: 0.08, envMapIntensity: 0.9,
   });
 
-  const shaft = new THREE.Mesh(
-    new THREE.CylinderGeometry(shaftR, shaftR, len - headLen, 12),
-    mat
-  );
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(shaftR, shaftR, len - headLen, 12), mat);
   shaft.position.y = (len - headLen) / 2;
   shaft.castShadow = false;
 
-  const head = new THREE.Mesh(
-    new THREE.ConeGeometry(headR, headLen, 16),
-    mat
-  );
+  const head = new THREE.Mesh(new THREE.ConeGeometry(headR, headLen, 18), mat);
   head.position.y = len - headLen / 2;
   head.castShadow = false;
 
@@ -548,7 +774,7 @@ export function arrow(from, to, opts = {}) {
   return g;
 }
 
-/** Dimension line with a label anchor at its midpoint. */
+/** Dimension line with ticks at both ends. */
 export function dimLine(a, b, opts = {}) {
   const g = new THREE.Group();
   g.add(polyline([a, b], { color: opts.color ?? 0x6b6b60, opacity: 0.9 }));
@@ -578,7 +804,7 @@ export function ring(inner, outer, opts = {}) {
   return m;
 }
 
-/** Text-free "hatch" group: parallel lines inside a rect, for section cuts. */
+/** Parallel hatch lines inside a rect, for section cuts. */
 export function hatch(x0, y0, w, hgt, opts = {}) {
   const g = new THREE.Group();
   const step = opts.step ?? 0.14;
@@ -593,16 +819,13 @@ export function hatch(x0, y0, w, hgt, opts = {}) {
   return g;
 }
 
-/**
- * Technical-illustration outline: draws the silhouette edges of a mesh so the
- * 2.5D parts read like an engineering drawing rather than flat plastic.
- */
+/** Technical-illustration outline: silhouette edges of a mesh. */
 export function outline(mesh, opts = {}) {
   const geo = new THREE.EdgesGeometry(mesh.geometry, opts.threshold ?? 24);
   const mat = new THREE.LineBasicMaterial({
     color: opts.color ?? 0x3d3d33,
     transparent: true,
-    opacity: opts.opacity ?? 0.55,
+    opacity: opts.opacity ?? 0.42,
   });
   const lines = new THREE.LineSegments(geo, mat);
   lines.position.copy(mesh.position);
@@ -618,7 +841,7 @@ export function part(group, mesh, opts = {}) {
   return mesh;
 }
 
-/** Ground plane (subtle grid) for site-like scenes. */
+/** Ground grid for site-like scenes. */
 export function ground(size = 12, opts = {}) {
   const g = new THREE.Group();
   const grid = new THREE.GridHelper(size, opts.divisions ?? 12, 0xc9c5b7, 0xdedacd);
@@ -629,4 +852,4 @@ export function ground(size = 12, opts = {}) {
   return g;
 }
 
-export { THREE, shade };
+export { THREE };

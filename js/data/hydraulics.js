@@ -232,7 +232,7 @@ export const HYDRAULICS = [
             note: e <= B / 6 ? "The resultant stays inside the middle third, so the whole base is in compression." : "The resultant falls outside the middle third — part of the base lifts off and tension is not allowed, so the pressure diagram becomes a triangle.",
           },
         ],
-        viz: { H, B, tw, FH, Ry, xbar, e, qmax, qmin, U, FSo, FSs, hw },
+        viz: { H, B, tw, FH, Ry, xbar, e, qmax, qmin, U, W1, W2, FSo, FSs, hw },
       };
     },
   }),

@@ -313,6 +313,442 @@ export function slope(api, d) {
   api.hud && api.hud.appendChild(chip(`β ${T(beta, 0)}° · φ ${T(phi, 0)}°`));
 }
 
+/* ==========================================================================
+   Consistency states — where SL, PL, LL and the natural w fall
+   ========================================================================== */
+export function consistency(api, d) {
+  const g = new THREE.Group();
+  const SL = d.SL ?? 15, PL = d.PL ?? 25, LL = d.LL ?? 50, w = d.w ?? 32;
+  const lo = Math.min(SL, w) - 8;
+  const hi = Math.max(LL, w) + 8;
+  const W = 4.6, H = 0.9;
+
+  const X = (v) => -W / 2 + ((v - lo) / (hi - lo)) * W;
+
+  // the four states as bands
+  const bands = [
+    { a: lo, b: SL, c: 0xb9b6ab, name: "solid" },
+    { a: SL, b: PL, c: 0xd6bd8e, name: "semi-solid" },
+    { a: PL, b: LL, c: 0xb08d63, name: "plastic" },
+    { a: LL, b: hi, c: 0x7fa9c9, name: "liquid" },
+  ];
+  bands.forEach((b) => {
+    const x0 = X(b.a), x1 = X(b.b);
+    const m = prism([[x0, 0], [x1, 0], [x1, H], [x0, H]], 0.5, { color: b.c, capColor: shade(b.c, 1.08) });
+    part(g, m, { opacity: 0.3 });
+    api.label(b.name, new THREE.Vector3((x0 + x1) / 2, H / 2, 0.26), { style: "background:rgba(255,255,255,.85)" });
+  });
+
+  // limit markers
+  const mark = (v, name, color, up) => {
+    const x = X(v);
+    g.add(polyline([[x, -0.1, 0.26], [x, H + 0.1, 0.26]], { color }));
+    api.label(`${name} ${T(v, 1)}`, new THREE.Vector3(x, up ? H + 0.34 : -0.34, 0.26), { style: "background:#fff" });
+  };
+  mark(SL, "SL", PALETTE.accent3, false);
+  mark(PL, "PL", PALETTE.accent3, true);
+  mark(LL, "LL", PALETTE.accent2, true);
+
+  // natural water content
+  const xw = X(w);
+  g.add(arrow([xw, -0.55, 0.26], [xw, -0.06, 0.26], { color: PALETTE.bad, headLen: 0.14, headR: 0.05, shaftR: 0.016 }));
+  api.label(`w = ${T(w, 1)}`, new THREE.Vector3(xw, -0.8, 0.26), { style: "background:#fdecec" });
+
+  // PI bracket
+  g.add(dimLine([X(PL), H + 0.62, 0.26], [X(LL), H + 0.62, 0.26], { tick: 0.07, color: PALETTE.accent }));
+  api.label(`PI = ${T(LL - PL, 1)}`, new THREE.Vector3((X(PL) + X(LL)) / 2, H + 0.86, 0.26), {
+    style: "background:#eef6ec",
+  });
+
+  api.legend([
+    { color: "#b9b6ab", label: "solid" },
+    { color: "#d6bd8e", label: "semi-solid" },
+    { color: "#b08d63", label: "plastic" },
+    { color: "#7fa9c9", label: "liquid" },
+    { color: "#c0392b", label: "natural w" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`LI = ${T((w - PL) / (LL - PL), 2)}`));
+}
+
+/* ==========================================================================
+   Gradation curve — semi-log, through the D-values that define it
+   ========================================================================== */
+export function gradation(api, d) {
+  const g = new THREE.Group();
+  // each Dxx value *is* a point on the curve: D60 = 60 % passing, etc.
+  const known = [
+    [d.D10, 10, "D₁₀"], [d.D20, 20, "D₂₀"], [d.D25, 25, "D₂₅"],
+    [d.D30, 30, "D₃₀"], [d.D50, 50, "D₅₀"], [d.D60, 60, "D₆₀"], [d.D75, 75, "D₇₅"],
+  ].filter(([v]) => v > 0).sort((a, b) => a[0] - b[0]);
+
+  if (known.length < 2) return;
+  const lx = (v) => Math.log10(v);
+  const xmin = lx(known[0][0]) - 0.35;
+  const xmax = lx(known[known.length - 1][0]) + 0.35;
+  const W = 4.4, H = 2.6;
+
+  const X = (v) => -W / 2 + ((lx(v) - xmin) / (xmax - xmin)) * W;
+  const Y = (p) => -H / 2 + (p / 100) * H;
+
+  // axes
+  g.add(polyline([[-W / 2, -H / 2, 0], [W / 2, -H / 2, 0]], { color: 0x2b2b24, opacity: 0.8 }));
+  g.add(polyline([[-W / 2, -H / 2, 0], [-W / 2, H / 2, 0]], { color: 0x2b2b24, opacity: 0.8 }));
+
+  // decade grid + labels
+  for (let e = Math.floor(xmin); e <= Math.ceil(xmax); e++) {
+    for (const m of [1, 2, 5]) {
+      const v = m * Math.pow(10, e);
+      const l = lx(v);
+      if (l < xmin || l > xmax) continue;
+      g.add(dashed([[X(v), -H / 2, 0], [X(v), H / 2, 0]], { color: 0xcfcabb, dashSize: 0.05, gapSize: 0.05 }));
+      if (m === 1) api.label(`${v < 1 ? v.toFixed(2) : v}`, new THREE.Vector3(X(v), -H / 2 - 0.26, 0), { style: "background:#fff" });
+    }
+  }
+  for (const p of [0, 25, 50, 75, 100]) {
+    g.add(polyline([[-W / 2 - 0.08, Y(p), 0], [-W / 2, Y(p), 0]], { color: 0x2b2b24 }));
+    api.label(`${p}`, new THREE.Vector3(-W / 2 - 0.32, Y(p), 0), { style: "background:#fff" });
+  }
+
+  // curve
+  const pts = known.map(([v, p]) => [X(v), Y(p), 0]);
+  g.add(polyline(pts, { color: PALETTE.accent, opacity: 0.9 }));
+  known.forEach(([v, p, name]) => {
+    const dot = cylinder(0.045, 0.045, 0.04, { color: PALETTE.accent2, segments: 14, position: [X(v), Y(p), 0.01] });
+    dot.rotation.x = Math.PI / 2;
+    g.add(dot);
+    api.label(name, new THREE.Vector3(X(v) + 0.02, Y(p) + 0.2, 0), { style: "background:#fceaf1" });
+  });
+
+  api.label("% passing", new THREE.Vector3(-W / 2 + 0.3, H / 2 + 0.34, 0), { style: "background:#fff" });
+  api.label("grain size, mm (log scale)", new THREE.Vector3(W / 2 - 0.85, -H / 2 - 0.72, 0), { style: "background:#fff" });
+
+  api.legend([
+    { color: "#2f7d32", label: "gradation curve" },
+    { color: "#c2185b", label: "D-values from the card" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`C_u ${T(d.D60 / d.D10, 3)} · C_c ${T((d.D30 ** 2) / (d.D60 * d.D10), 3)}`));
+}
+
+/* ==========================================================================
+   Compaction curve with the field point and the line of optimums
+   ========================================================================== */
+export function proctor(api, d) {
+  const g = new THREE.Group();
+  const gmax = d.gmax ?? 19;
+  const gmin = d.gmin ?? 15;
+  const gf = d.gfield ?? 18;
+  const wopt = 13;
+  const W = 4.2, H = 2.4;
+
+  const wMin = 5, wMax = 24;
+  const yMin = Math.min(gmin * 0.94, gf * 0.94);
+  const yMax = gmax * 1.06;
+
+  const X = (w) => -W / 2 + ((w - wMin) / (wMax - wMin)) * W;
+  const Y = (v) => -H / 2 + ((v - yMin) / (yMax - yMin)) * H;
+
+  // axes
+  g.add(polyline([[-W / 2, -H / 2, 0], [W / 2, -H / 2, 0]], { color: 0x2b2b24, opacity: 0.8 }));
+  g.add(polyline([[-W / 2, -H / 2, 0], [-W / 2, H / 2, 0]], { color: 0x2b2b24, opacity: 0.8 }));
+
+  // compaction curve
+  const curve = [];
+  for (let i = 0; i <= 60; i++) {
+    const w = wMin + ((wMax - wMin) * i) / 60;
+    const v = gmax - 0.032 * Math.pow(w - wopt, 2);
+    if (v < yMin) continue;
+    curve.push([X(w), Y(v), 0]);
+  }
+  g.add(face([[-W / 2, -H / 2], ...curve, [W / 2, -H / 2]], { color: PALETTE.accent, opacity: 0.1 }));
+  g.add(polyline(curve, { color: PALETTE.accent }));
+
+  // peak
+  const pk = cylinder(0.055, 0.055, 0.05, { color: PALETTE.accent, segments: 16, position: [X(wopt), Y(gmax), 0.01] });
+  pk.rotation.x = Math.PI / 2;
+  g.add(pk);
+  g.add(dashed([[X(wopt), -H / 2, 0], [X(wopt), Y(gmax), 0]], { color: PALETTE.accent, dashSize: 0.07 }));
+  api.label(`γ_d(max) = ${T(gmax, 3)}`, new THREE.Vector3(X(wopt) + 0.1, Y(gmax) + 0.24, 0), { style: "background:#eef6ec" });
+  api.label(`w_opt ≈ ${T(wopt, 1)}%`, new THREE.Vector3(X(wopt), -H / 2 - 0.22, 0), { style: "background:#fff" });
+
+  // field point + relative compaction line
+  g.add(dashed([[-W / 2, Y(gf), 0], [X(wMax - 3), Y(gf), 0]], { color: PALETTE.accent3, dashSize: 0.08 }));
+  const fp = cylinder(0.06, 0.06, 0.05, { color: PALETTE.bad, segments: 16, position: [X(wMax - 4), Y(gf), 0.01] });
+  fp.rotation.x = Math.PI / 2;
+  g.add(fp);
+  api.label(`field γ_d = ${T(gf, 3)}`, new THREE.Vector3(X(wMax - 6.5), Y(gf) + 0.22, 0), { style: "background:#fdecec" });
+  api.label(`R = ${T((gf / gmax) * 100, 1)}%`, new THREE.Vector3(X(wMax - 6.5), Y(gf) - 0.24, 0), { style: "background:#e9eff9" });
+
+  api.label("water content %", new THREE.Vector3(W / 2 - 0.85, -H / 2 - 0.34, 0), { style: "background:#fff" });
+  api.label("γ_d", new THREE.Vector3(-W / 2 + 0.18, H / 2 - 0.16, 0), { style: "background:#fff" });
+  for (const wv of [5, 10, 15, 20]) {
+    api.label(String(wv), new THREE.Vector3(X(wv), -H / 2 - 0.2, 0), { style: "background:#fff" });
+  }
+
+  api.legend([
+    { color: "#2f7d32", label: "compaction curve" },
+    { color: "#c0392b", label: "field point" },
+    { color: "#0d47a1", label: "R = γd / γd(max)" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`R = ${T((gf / gmax) * 100, 1)} %`));
+}
+
+/* ==========================================================================
+   Flow curve — water content against blows, liquid limit at 25
+   ========================================================================== */
+export function flowcurve(api, d) {
+  const g = new THREE.Group();
+  const w1 = d.w1 ?? 50, N1 = d.N1 ?? 18, w2 = d.w2 ?? 44, N2 = d.N2 ?? 32;
+  const W = 4.2, H = 2.4;
+  const lx = (n) => Math.log10(n);
+  const nMin = Math.min(N1, N2, 25) * 0.5;
+  const nMax = Math.max(N1, N2, 25) * 2;
+  const wMin = Math.min(w1, w2) - 6;
+  const wMax = Math.max(w1, w2) + 6;
+
+  const X = (n) => -W / 2 + ((lx(n) - lx(nMin)) / (lx(nMax) - lx(nMin))) * W;
+  const Y = (w) => -H / 2 + ((w - wMin) / (wMax - wMin)) * H;
+
+  g.add(polyline([[-W / 2, -H / 2, 0], [W / 2, -H / 2, 0]], { color: 0x2b2b24, opacity: 0.8 }));
+  g.add(polyline([[-W / 2, -H / 2, 0], [-W / 2, H / 2, 0]], { color: 0x2b2b24, opacity: 0.8 }));
+
+  for (const n of [10, 15, 20, 25, 30, 40, 50]) {
+    if (n < nMin || n > nMax) continue;
+    g.add(dashed([[X(n), -H / 2, 0], [X(n), H / 2, 0]], { color: 0xcfcabb, dashSize: 0.05, gapSize: 0.05 }));
+    api.label(String(n), new THREE.Vector3(X(n), -H / 2 - 0.2, 0), { style: "background:#fff" });
+  }
+
+  // flow line
+  g.add(polyline([[X(N1), Y(w1), 0], [X(N2), Y(w2), 0]], { color: PALETTE.accent2 }));
+
+  // extrapolate to 25 blows
+  const FI = (w1 - w2) / Math.log10(N2 / N1);
+  const LL = w1 + FI * Math.log10(25 / N1);
+  g.add(dashed([[X(25), -H / 2, 0], [X(25), Y(LL), 0]], { color: PALETTE.accent3, dashSize: 0.07 }));
+
+  const mk = (n, w, c, label, dy) => {
+    const dot = cylinder(0.05, 0.05, 0.05, { color: c, segments: 14, position: [X(n), Y(w), 0.01] });
+    dot.rotation.x = Math.PI / 2;
+    g.add(dot);
+    api.label(label, new THREE.Vector3(X(n), Y(w) + dy, 0), { style: "background:#fff" });
+  };
+  mk(N1, w1, PALETTE.accent2, `(${T(N1, 0)}, ${T(w1, 1)}%)`, 0.22);
+  mk(N2, w2, PALETTE.accent2, `(${T(N2, 0)}, ${T(w2, 1)}%)`, -0.26);
+  mk(25, LL, PALETTE.accent, `LL = ${T(LL, 1)}%`, 0.24);
+
+  api.label("blows, N (log)", new THREE.Vector3(W / 2 - 0.7, -H / 2 - 0.45, 0), { style: "background:#fff" });
+  api.label("w %", new THREE.Vector3(-W / 2 + 0.35, H / 2 + 0.2, 0), { style: "background:#fff" });
+
+  api.legend([
+    { color: "#c2185b", label: "flow line" },
+    { color: "#2f7d32", label: "liquid limit at 25 blows" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`FI = ${T(FI, 3)}`));
+}
+
+/* ==========================================================================
+   Layered strata — flow parallel vs perpendicular
+   ========================================================================== */
+export function strata(api, d) {
+  const g = new THREE.Group();
+  const layers = [
+    { h: d.h1, k: d.k1 },
+    { h: d.h2, k: d.k2 },
+    { h: d.h3, k: d.k3 },
+  ].filter((l) => l.h > 0);
+  const H = layers.reduce((a, l) => a + l.h, 0);
+  const k = 2.4 / H;
+  const W = 2.6, D = 1.6;
+
+  let y = 0;
+  const cols = [PALETTE.sand, PALETTE.soil, PALETTE.soilDark];
+  layers.forEach((l, i) => {
+    const hh = l.h * k;
+    const m = prism([[-W / 2, y], [W / 2, y], [W / 2, y - hh], [-W / 2, y - hh]], D,
+      { color: cols[i % cols.length] });
+    part(g, m, { opacity: 0.45 });
+    api.label(`h${i + 1} = ${T(l.h, 2)} m · k = ${T(l.k, 6)}`, new THREE.Vector3(W / 2 + 0.55, y - hh / 2, D / 2), {
+      style: "background:#fff",
+    });
+    y -= hh;
+  });
+
+  // parallel flow arrows (along the bedding)
+  for (let i = 0; i < layers.length; i++) {
+    const yy = -((layers.slice(0, i).reduce((a, l) => a + l.h, 0) + layers[i].h / 2) * k);
+    g.add(arrow([-W / 2 + 0.1, yy, D / 2 + 0.01], [W / 2 - 0.1, yy, D / 2 + 0.01], {
+      color: PALETTE.accent, headLen: 0.16, headR: 0.055, shaftR: 0.018,
+    }));
+  }
+  api.label("flow ∥ layers", new THREE.Vector3(0, 0.28, D / 2), { style: "background:#eef6ec" });
+
+  api.legend([
+    { color: "#2f7d32", label: "flow parallel (k∥ = Σkh/H)" },
+    { color: "#b08d63", label: "soil layers" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`H = ${T(H, 2)} m`));
+}
+
+/* ==========================================================================
+   Flow net under a sheet pile
+   ========================================================================== */
+export function flownet(api, d) {
+  const g = new THREE.Group();
+  const Nf = Math.max(2, Math.round(d.Nf || 4));
+  const Nd = Math.max(4, Math.round(d.Nd || 12));
+  const W = 4.0, H = 2.6;
+
+  // ground line and sheet pile
+  g.add(polyline([[-W / 2, 0, 0], [W / 2, 0, 0]], { color: 0x2b2b24 }));
+  g.add(polyline([[0, 0.1, 0], [0, -1.5, 0]], { color: PALETTE.steelDark }));
+
+  // upstream / downstream water levels
+  g.add(polyline([[-W / 2, 0.55, 0], [0, 0.55, 0]], { color: PALETTE.waterDark }));
+  g.add(polyline([[0, 0.1, 0], [W / 2, 0.1, 0]], { color: PALETTE.waterDark }));
+  api.label("upstream", new THREE.Vector3(-W / 2 + 0.55, 0.72, 0), { style: "background:#eaf0f8" });
+  api.label("downstream", new THREE.Vector3(W / 2 - 0.6, 0.26, 0), { style: "background:#eaf0f8" });
+
+  // flow lines: quarter-ellipses sweeping under the pile
+  for (let i = 1; i <= Nf; i++) {
+    const t = i / (Nf + 1);
+    const pts = [];
+    for (let j = 0; j <= 40; j++) {
+      const a = (j / 40) * Math.PI;
+      const rx = 0.55 + t * 1.25;
+      const ry = 0.55 + t * 0.85;
+      pts.push([-Math.cos(a) * rx, 0.05 - Math.sin(a) * ry, 0]);
+    }
+    g.add(polyline(pts, { color: PALETTE.accent3, opacity: 0.75 }));
+  }
+
+  // equipotential drops
+  for (let i = 1; i < Nd; i++) {
+    const t = i / Nd;
+    const x = -1.35 + 2.7 * t;
+    const depth = 1.35 * Math.sin(Math.PI * t) + 0.12;
+    g.add(polyline([[x, 0.05, 0], [x * 0.55, 0.05 - depth, 0]], { color: PALETTE.accent2, opacity: 0.45 }));
+  }
+
+  api.label(`${Nf} flow channels`, new THREE.Vector3(-1.5, -1.75, 0), { style: "background:#e9eff9" });
+  api.label(`${Nd} drops`, new THREE.Vector3(1.4, -1.75, 0), { style: "background:#fceaf1" });
+
+  api.legend([
+    { color: "#0d47a1", label: "flow lines" },
+    { color: "#c2185b", label: "equipotential lines" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`Q = kH·Nf/Nd`));
+}
+
+/* ==========================================================================
+   e–log p curve — normally consolidated vs over-consolidated
+   ========================================================================== */
+export function elogp(api, d) {
+  const g = new THREE.Group();
+  const Cc = d.Cc ?? 0.3, e0 = d.e0 ?? 0.9, P0 = d.P0 ?? 100, Pc = d.Pc ?? 0, dP = d.dP ?? 50;
+  const Cs = Cc / 5;
+  const W = 4.2, H = 2.4;
+  const pMin = Math.max(2, P0 / 3);
+  const pMax = (P0 + dP) * 2.5;
+  const lx = (p) => Math.log10(p);
+
+  const eMax = e0 + 0.1, eMin = e0 - 0.22;
+  const X = (p) => -W / 2 + ((lx(p) - lx(pMin)) / (lx(pMax) - lx(pMin))) * W;
+  const Y = (e) => -H / 2 + ((e - eMin) / (eMax - eMin)) * H;
+
+  g.add(polyline([[-W / 2, -H / 2, 0], [W / 2, -H / 2, 0]], { color: 0x2b2b24, opacity: 0.8 }));
+  g.add(polyline([[-W / 2, -H / 2, 0], [-W / 2, H / 2, 0]], { color: 0x2b2b24, opacity: 0.8 }));
+
+  const eAt = (p) => {
+    if (Pc > P0 && p <= Pc) return e0 - Cs * lx(p / P0);
+    const eC = Pc > P0 ? e0 - Cs * lx(Pc / P0) : e0;
+    return eC - Cc * lx(p / (Pc > P0 ? Pc : P0));
+  };
+
+  const pts = [];
+  for (let i = 0; i <= 80; i++) {
+    const p = pMin * Math.pow(pMax / pMin, i / 80);
+    pts.push([X(p), Y(eAt(p)), 0]);
+  }
+  g.add(polyline(pts, { color: PALETTE.accent }));
+
+  const mk = (p, e, c, label, dy) => {
+    const dot = cylinder(0.045, 0.045, 0.04, { color: c, segments: 14, position: [X(p), Y(e), 0.01] });
+    dot.rotation.x = Math.PI / 2;
+    g.add(dot);
+    if (label) api.label(label, new THREE.Vector3(X(p), Y(e) + dy, 0), { style: "background:#fff" });
+  };
+  mk(P0, eAt(P0), PALETTE.bad, `P₀ = ${T(P0, 0)}`, -0.3);
+  if (Pc > P0) mk(Pc, eAt(Pc), PALETTE.accent2, `P_c = ${T(Pc, 0)}`, 0.3);
+  mk(P0 + dP, eAt(P0 + dP), PALETTE.accent3, `P₀+ΔP = ${T(P0 + dP, 0)}`, -0.3);
+
+  api.label("void ratio e", new THREE.Vector3(-W / 2 + 0.45, H / 2 - 0.12, 0), { style: "background:#fff" });
+  api.label("pressure, kPa (log)", new THREE.Vector3(W / 2 - 0.9, -H / 2 - 0.34, 0), { style: "background:#fff" });
+
+  api.legend([
+    { color: "#2f7d32", label: "e–log p curve" },
+    { color: "#c0392b", label: "P₀ / P_c" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(Pc > P0 ? "over-consolidated" : "normally consolidated"));
+}
+
+/* ==========================================================================
+   Pile — skin friction along the shaft, tip resistance at the base
+   ========================================================================== */
+export function pile(api, d) {
+  const g = new THREE.Group();
+  const Dp = d.D ?? 0.4;
+  const L = d.L ?? 12;
+  const k = 2.6 / Math.max(L, 4);
+  const dia = Math.max(Dp * k, 0.12);
+  const depth = L * k;
+
+  // soil block
+  part(g, prism([[-1.5, 0], [1.5, 0], [1.5, -depth], [-1.5, -depth]], 1.4,
+    { color: PALETTE.soil, opacity: 0.5 }), { opacity: 0.3 });
+  g.add(polyline([[-1.5, 0, 0.71], [1.5, 0, 0.71]], { color: 0x2b2b24 }));
+
+  // pile
+  const pl = cylinder(dia / 2, dia / 2, depth + 0.3, {
+    color: PALETTE.concrete, segments: 24, position: [0, -depth / 2 + 0.15, 0],
+  });
+  part(g, pl, { opacity: 0.5 });
+
+  // skin friction arrows along the shaft
+  for (let i = 1; i <= 5; i++) {
+    const y = -(depth * i) / 6;
+    g.add(arrow([dia / 2 + 0.34, y, 0], [dia / 2 + 0.04, y, 0], {
+      color: PALETTE.accent3, headLen: 0.1, headR: 0.035, shaftR: 0.011,
+    }));
+    g.add(arrow([-dia / 2 - 0.34, y, 0], [-dia / 2 - 0.04, y, 0], {
+      color: PALETTE.accent3, headLen: 0.1, headR: 0.035, shaftR: 0.011,
+    }));
+  }
+  api.label("skin friction Q_f", new THREE.Vector3(0.95, -depth * 0.45, 0), { style: "background:#e9eff9" });
+
+  // tip resistance
+  g.add(arrow([0, -depth - 0.55, 0], [0, -depth - 0.06, 0], {
+    color: PALETTE.bad, headLen: 0.16, headR: 0.06, shaftR: 0.02,
+  }));
+  api.label("tip Q_tip", new THREE.Vector3(0.55, -depth - 0.45, 0), { style: "background:#fdecec" });
+
+  // load
+  g.add(arrow([0, 0.9, 0], [0, 0.18, 0], { color: PALETTE.accent, headLen: 0.16, headR: 0.06, shaftR: 0.02 }));
+  api.label(`Q_u`, new THREE.Vector3(0.5, 0.8, 0), { style: "background:#eef6ec" });
+
+  api.legend([
+    { color: "#0d47a1", label: "shaft friction" },
+    { color: "#c0392b", label: "tip resistance" },
+  ]);
+  api.add(g);
+  api.hud && api.hud.appendChild(chip(`D ${T(Dp, 2)} m · L ${T(L, 1)} m`));
+}
+
 /* ========================================================================== */
 function chip(text) {
   const el = document.createElement("span");

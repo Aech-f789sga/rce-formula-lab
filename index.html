@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RCE Formula Lab — Auto-Solving Civil Engineering Formula Card</title>
+<meta name="description" content="An interactive, auto-calculating companion to the RCE Formula Card by Engr. Aleah Pearl Javier Once. Step-by-step solutions and 2.5D visualizations for Geotechnical, Hydraulics, Structural, and Math/Surveying/Transportation engineering." />
+<meta name="theme-color" content="#f7f6f2" />
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="vendor/katex/katex.min.css" />
+<link rel="stylesheet" href="css/styles.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/"
+  }
+}
+</script>
+<script defer src="vendor/katex/katex.min.js"></script>
+</head>
+<body>
+
+<a class="skip-link" href="#stage">Skip to calculator</a>
+
+<header class="topbar">
+  <div class="topbar__inner">
+    <a class="brand" href="#/" aria-label="RCE Formula Lab home">
+      <span class="brand__mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="1.5" y="1.5" width="29" height="29" rx="7" stroke="currentColor" stroke-width="2"/>
+          <path d="M8 21.5 L13.2 10 L18.4 21.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M10.4 17.6 H16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M21 10.5 V21.5 M21 10.5 H24.2 a2.8 2.8 0 0 1 0 5.6 H21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span class="brand__text">
+        <strong>RCE Formula Lab</strong>
+        <em>auto-solving formula card</em>
+      </span>
+    </a>
+
+    <div class="search">
+      <svg class="search__icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.6" cy="8.6" r="5.6" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M12.8 12.8 L17 17" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      <input id="search" type="search" placeholder="Search — try “void ratio”, “weir”, “column”" autocomplete="off" spellcheck="false" aria-label="Search calculators" />
+      <kbd class="search__kbd">/</kbd>
+      <div id="searchResults" class="search__results" hidden></div>
+    </div>
+
+    <nav class="sections" id="sectionNav" aria-label="Sections"></nav>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="rail" id="rail" aria-label="Calculator index">
+    <div class="rail__head">
+      <span>Index</span>
+      <button id="railToggle" class="rail__toggle" type="button" aria-expanded="true" aria-controls="railBody">Collapse</button>
+    </div>
+    <div class="rail__body" id="railBody"></div>
+    <div class="rail__foot">
+      <span id="railCount"></span>
+    </div>
+  </aside>
+
+  <main class="stage" id="stage" tabindex="-1"></main>
+</div>
+
+<footer class="footer">
+  <div class="footer__inner">
+    <p>
+      Built as an interactive companion to the <strong>RCE Formula Card</strong> by
+      <strong>Engr. Aleah Pearl Javier Once, RCE (2024)</strong>. All formulas, notation and
+      conventions are transcribed from that card; page references (e.g. <span class="pgref">p.2</span>)
+      point to the source PDF.
+    </p>
+    <p class="footer__links">
+      <a href="#/references">Code references &amp; credits</a>
+      <span aria-hidden="true">·</span>
+      <a href="https://github.com/Aech-f789sga" target="_blank" rel="noopener">GitHub</a>
+    </p>
+  </div>
+</footer>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
